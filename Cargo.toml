@@ -1,0 +1,7 @@
+[package]
+name = "brainrust"
+version = "0.1.0"
+authors = ["Adam Richardson <as3richa@uwaterloo.ca>"]
+edition = "2018"
+
+[dependencies]
