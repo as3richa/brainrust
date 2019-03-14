@@ -6,105 +6,95 @@ use crate::stream::Stream;
 use crate::tree::Tree;
 use crate::tree::Tree::*;
 
-pub struct Parser<R: io::Read> {
-    stream: Stream<R>,
+pub type ParseResult = Result<Tree, ParseError>;
+
+pub fn parse<R: io::Read>(stream: &mut Stream<R>) -> ParseResult {
+    let node = match stream.peek()? {
+        Some(byte) => {
+            let (line, column) = (stream.line, stream.column);
+            stream.forward();
+
+            match byte {
+                b'>' | b'<' => parse_move(stream, byte)?,
+                b'+' | b'-' => parse_increment(stream, byte)?,
+                b'[' => parse_loop(stream, line, column)?,
+
+                b'.' => WriteChar,
+                b',' => ReadChar,
+
+                b']' => {
+                    let error = SyntaxError::new(line, column, "unmatched closing bracket `]`");
+                    return Err(ParseError::from(error));
+                }
+
+                _ => unreachable!(),
+            }
+        }
+        None => EndOfFile,
+    };
+
+    Ok(node)
 }
 
-impl<R: io::Read> Parser<R> {
-    pub fn new(read: R) -> Self {
-        let stream = Stream::new(read);
-        Self { stream }
+fn parse_move<R: io::Read>(stream: &mut Stream<R>, byte: u8) -> ParseResult {
+    let mut shift = {
+        if byte == b'>' {
+            1
+        } else {
+            -1
+        }
+    };
+
+    while let Some(byte) = stream.peek()? {
+        match byte {
+            b'>' => shift += 1,
+            b'<' => shift -= 1,
+            _ => break,
+        }
+        stream.forward();
     }
 
-    pub fn parse(&mut self) -> Result<Tree, ParseError> {
-        let node = match self.stream.peek()? {
-            Some(byte) => {
-                let line = self.stream.line;
-                let column = self.stream.column;
-                self.stream.forward();
+    Ok(Move(shift))
+}
 
-                match byte {
-                    b'>' | b'<' => self.parse_move(byte)?,
-                    b'+' | b'-' => self.parse_increment(byte)?,
-                    b'[' => self.parse_loop(line, column)?,
+fn parse_increment<R: io::Read>(stream: &mut Stream<R>, byte: u8) -> ParseResult {
+    let mut value = {
+        if byte == b'+' {
+            1
+        } else {
+            -1
+        }
+    };
 
-                    b'.' => WriteChar,
-                    b',' => ReadChar,
+    while let Some(byte) = stream.peek()? {
+        match byte {
+            b'+' => value += 1,
+            b'-' => value -= 1,
+            _ => break,
+        }
+        stream.forward();
+    }
 
-                    b']' => {
-                        let error = SyntaxError::new(line, column, "unmatched closing bracket `]`");
-                        return Err(ParseError::from(error));
-                    }
+    Ok(Add(value))
+}
 
-                    _ => unreachable!(),
+fn parse_loop<R: io::Read>(stream: &mut Stream<R>, line: usize, column: usize) -> ParseResult {
+    let mut children = vec![];
+
+    loop {
+        match stream.peek()? {
+            Some(b']') => break,
+            _ => match parse(stream)? {
+                EndOfFile => {
+                    let error = SyntaxError::new(line, column, "unmatched opening bracket `[`");
+                    return Err(ParseError::from(error));
                 }
-            }
-            None => EndOfFile,
-        };
-
-        Ok(node)
-    }
-
-    fn parse_move(&mut self, byte: u8) -> Result<Tree, io::Error> {
-        let mut shift = {
-            if byte == b'>' {
-                1
-            } else {
-                -1
-            }
-        };
-
-        while let Some(byte) = self.stream.peek()? {
-            match byte {
-                b'>' => shift += 1,
-                b'<' => shift -= 1,
-                _ => break,
-            }
-            self.stream.forward();
+                child => children.push(child),
+            },
         }
-
-        Ok(Move(shift))
     }
 
-    fn parse_increment(&mut self, byte: u8) -> Result<Tree, io::Error> {
-        let mut value = {
-            if byte == b'+' {
-                1
-            } else {
-                -1
-            }
-        };
-
-        while let Some(byte) = self.stream.peek()? {
-            match byte {
-                b'+' => value += 1,
-                b'-' => value -= 1,
-                _ => break,
-            }
-            self.stream.forward();
-        }
-
-        Ok(Add(value))
-    }
-
-    fn parse_loop(&mut self, line: usize, column: usize) -> Result<Tree, ParseError> {
-        let mut children = vec![];
-
-        loop {
-            match self.stream.peek()? {
-                Some(b']') => break,
-                _ => match self.parse()? {
-                    EndOfFile => {
-                        let error = SyntaxError::new(line, column, "unmatched opening bracket `[`");
-                        return Err(ParseError::from(error));
-                    }
-                    child => children.push(child),
-                },
-            }
-        }
-
-        Ok(Loop(children))
-    }
+    Ok(Loop(children))
 }
 
 pub enum ParseError {
@@ -150,11 +140,7 @@ pub struct SyntaxError {
 
 impl SyntaxError {
     fn new(line: usize, column: usize, message: &'static str) -> Self {
-        Self {
-            line,
-            column,
-            message,
-        }
+        Self { line, column, message }
     }
 }
 

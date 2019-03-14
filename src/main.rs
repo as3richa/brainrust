@@ -4,10 +4,11 @@ mod tree;
 
 use std::io;
 
-use crate::parser::Parser;
+use crate::parser::parse;
+use crate::stream::Stream;
 
 fn main() {
     let stdin = io::stdin();
-    let mut parser = Parser::new(stdin.lock());
-    println!("{:?}", parser.parse());
+    let mut stream = Stream::new(stdin.lock());
+    println!("{:?}", parse(&mut stream));
 }
