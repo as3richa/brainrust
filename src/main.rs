@@ -1,20 +1,13 @@
-mod instruction;
-mod lexer;
+mod parser;
+mod stream;
+mod tree;
 
 use std::io;
 
-use instruction::Instruction;
-use lexer::Lexer;
+use crate::parser::Parser;
 
 fn main() {
     let stdin = io::stdin();
-    let mut lexer = Lexer::new(stdin.lock());
-
-    loop {
-        let (instruction, line, column) = lexer.lex().unwrap();
-        println!("{}:{}: {:?}", line, column, instruction);
-        if let Instruction::ProgramEnd = instruction {
-            break;
-        }
-    }
+    let mut parser = Parser::new(stdin.lock());
+    println!("{:?}", parser.parse());
 }
