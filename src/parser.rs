@@ -6,10 +6,10 @@ use crate::stream::Stream;
 use crate::tree::Tree;
 use crate::tree::Tree::*;
 
-pub type ParseResult = Result<Tree, ParseError>;
+type ParseResult = Result<Tree, ParseError>;
 
 pub fn parse<R: io::Read>(stream: &mut Stream<R>) -> ParseResult {
-    let node = match stream.peek()? {
+    let tree = match stream.peek()? {
         Some(byte) => {
             let (line, column) = (stream.line, stream.column);
             stream.forward();
@@ -33,7 +33,7 @@ pub fn parse<R: io::Read>(stream: &mut Stream<R>) -> ParseResult {
         None => EndOfFile,
     };
 
-    Ok(node)
+    Ok(tree)
 }
 
 fn parse_move<R: io::Read>(stream: &mut Stream<R>, byte: u8) -> ParseResult {
@@ -83,7 +83,10 @@ fn parse_loop<R: io::Read>(stream: &mut Stream<R>, line: usize, column: usize) -
 
     loop {
         match stream.peek()? {
-            Some(b']') => break,
+            Some(b']') => {
+                stream.forward();
+                break;
+            }
             _ => match parse(stream)? {
                 EndOfFile => {
                     let error = SyntaxError::new(line, column, "unmatched opening bracket `[`");

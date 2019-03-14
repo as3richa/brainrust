@@ -1,0 +1,196 @@
+use std::io;
+
+use crate::parser::{parse, ParseError};
+use crate::stream::Stream;
+use crate::tree::Tree;
+use crate::tree::Tree::*;
+
+/*
+    The ELF binary is layed out as follows:
+    - ELF header (64 bytes)
+    - .text program header (56 bytes)
+    - .bss program header (56 bytes)
+    - Dummy section header (64 bytes, offset 0xb0)
+    - .text section header (64 bytes)
+    - .bss section header (64 bytes)
+    - String table section header (64 bytes)
+    - String table contents (22 bytes, offset 0x01b0)
+    - Code (variable length, offset 0x01c6)
+
+    The user-space virtual address space spans from  0x0000000000000000
+    to 0x00007fffffffffff.
+
+    ELF dictates that "loadable process segments must have congruent values for
+    p_vaddr and p_offset, modulo the page size", that is to say that the virtual
+    address of the .text segment must be at an offset 0x01c6 bytes past a page
+    boundary. The most obvious choice is to map .text to 0x00000000000001c6, but
+    Linux doesn't like this; the resultant executable immediately segfaults. I
+    imagine this is because of some special casing of the first page of virtual
+    memory, but I haven't been able to find a reference. Instead, we just map .text
+    to 0x00001000000001c6. This address apears in the ELF header as the entry point,
+    and as the virtual address in both program and section headers for the .text
+    segment.
+*/
+
+const ELF_HEADER: [u8; 64] = [
+    0x7f, 0x45, 0x4c, 0x46, // Magic numbers
+    0x02, 0x01, 0x01, 0x00, // 64-bit encoding; little-endian encoding; version 1; System V ABI
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Padding
+    0x02, 0x00, // Type (executable file)
+    0x3e, 0x00, // Architecture (AMD64)
+    0x01, 0x00, 0x00, 0x00, // Version (1, again)
+    0xc6, 0x01, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, // Entry point
+    0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Program header table offset
+    0xb0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Section header table offset
+    0x00, 0x00, 0x00, 0x00, // Flags (unused)
+    0x40, 0x00, // Size of ELF header
+    0x38, 0x00, // Size of program header
+    0x02, 0x00, // Number of program headers (.text, .bss)
+    0x40, 0x00, // Size of section header
+    0x04, 0x00, // Number of sections headers (dummy section, .text, .bss, name table)
+    0x03, 0x00, // Index of name table section
+];
+
+// Leading portion of the .text program header, up until the size fields
+const TEXT_PROGRAM_HEADER_START: [u8; 32] = [
+    0x01, 0x00, 0x00, 0x00, // Type (loadable segment)
+    0x05, 0x00, 0x00, 0x00, // Flags (readable, executable),
+    0xc6, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Offset
+    0xc6, 0x01, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, // Virtual address (same as entry point)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Physical address (unused)
+];
+
+// Trailing portion of the .text program header after the size fields
+const TEXT_PROGRAM_HEADER_END: [u8; 8] = [
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Alignment (unused)
+];
+
+const BSS_PROGRAM_HEADER: [u8; 56] = [
+    0x01, 0x00, 0x00, 0x00, // Type (loadable segment)
+    0x06, 0x00, 0x00, 0x00, // Flags (readable, writeable),
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Offset (unused)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x60, 0x00, 0x00, // Virtual address
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Physical address (unused)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Size on disk (unused)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Size in memory (FIXME)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Alignment (unused)
+];
+
+const DUMMY_SECTION_HEADER: [u8; 64] = [
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+// Leading portion of .text section header, up until the size field
+const TEXT_SECTION_HEADER_START: [u8; 32] = [
+    0x01, 0x00, 0x00, 0x00, // Name offset (1 byte into the table)
+    0x01, 0x00, 0x00, 0x00, // Type (PROGBITS, i.e. program data)
+    0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Flags (ALLOC [occupies memory], EXECINSTR [executable])
+    0xc6, 0x01, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, // Virtual address (same as entry point)
+    0xc6, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Offset
+];
+
+// Trailing portion of .text section header after the size field
+const TEXT_SECTION_HEADER_END: [u8; 24] = [
+    0x00, 0x00, 0x00, 0x00, // Linked section (unused)
+    0x00, 0x00, 0x00, 0x00, // Info field (unused)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Alignment (unused)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Entity size (unused)
+];
+
+const BSS_SECTION_HEADER: [u8; 64] = [
+    0x07, 0x00, 0x00, 0x00, // Name offset (7 bytes into the table)
+    0x08, 0x00, 0x00, 0x00, // Type (NOBITS, i.e. occupies no space on disk)
+    0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Flags (WRITE, ALLOC)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x60, 0x00, 0x00, // Virtual address
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Offset (unused)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Size (FIXME)
+    0x00, 0x00, 0x00, 0x00, // Linked section (unused)
+    0x00, 0x00, 0x00, 0x00, // Info field (unused)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Alignment (unused)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Entity size (unused)
+];
+
+const STRING_TABLE_SECTION_HEADER: [u8; 64] = [
+    0x0c, 0x00, 0x00, 0x00, // Name offset (12 bytes into the table)
+    0x03, 0x00, 0x00, 0x00, // Type (string table)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Flags (none)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Virtual address (unused)
+    0xb0, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Offset
+    0x16, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Size (22 bytes)
+    0x00, 0x00, 0x00, 0x00, // Linked section (unused)
+    0x00, 0x00, 0x00, 0x00, // Info field (unused)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Alignment (unused)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Entity size (unused)
+];
+
+const STRING_TABLE_CONTENTS: [u8; 22] = [
+    0x00, // Unused index
+    b'.', b't', b'e', b'x', b't', 0x00, // .text (offset 1)
+    b'.', b'b', b's', b's', 0x00, // .bss (offset 7)
+    b'.', b's', b'h', b's', b't', b'r', b't', b'a', b'b', 0x00, // .shstrtab (offset 12)
+];
+
+const CODE_TRAILER: [u8; 9] = [
+    0xb8, 0x3c, 0x00, 0x00, 0x00, // mov eax, 0x3c ; 0x36 => exit syscall
+    0x31, 0xff, // xor edi, edi ; exit code zero
+    0x0f, 0x05, // syscall
+];
+
+pub fn compile<W: io::Write, R: io::Read>(mut output: W, mut stream: Stream<R>) -> Result<(), ParseError> {
+    // FIXME: ParseError isn't semantically correct for errors in writing to output
+
+    let mut code: Vec<u8> = vec![];
+
+    loop {
+        let tree = parse(&mut stream)?;
+
+        match tree {
+            Move(_shift) => code.extend(&[0x31, 0xc9]),
+            Add(_value) => code.extend(&[0x31, 0xc9]),
+            ReadChar => code.extend(&[0x31, 0xc9]),
+            WriteChar => code.extend(&[0x31, 0xc9]),
+            Loop(children) => compile_loop(&mut code, children),
+            EndOfFile => break,
+        }
+    }
+
+    let little_endian_code_size: [u8; 8] = {
+        let size = code.len() + CODE_TRAILER.len();
+        [
+            (size & 0xff) as u8,
+            ((size >> 8) & 0xff) as u8,
+            ((size >> 16) & 0xff) as u8,
+            ((size >> 24) & 0xff) as u8,
+            ((size >> 32) & 0xff) as u8,
+            ((size >> 40) & 0xff) as u8,
+            ((size >> 48) & 0xff) as u8,
+            ((size >> 56) & 0xff) as u8,
+        ]
+    };
+
+    output.write_all(&ELF_HEADER)?;
+    output.write_all(&TEXT_PROGRAM_HEADER_START)?;
+    output.write_all(&little_endian_code_size)?;
+    output.write_all(&little_endian_code_size)?;
+    output.write_all(&TEXT_PROGRAM_HEADER_END)?;
+    output.write_all(&BSS_PROGRAM_HEADER)?;
+    output.write_all(&DUMMY_SECTION_HEADER)?;
+    output.write_all(&TEXT_SECTION_HEADER_START)?;
+    output.write_all(&little_endian_code_size)?;
+    output.write_all(&TEXT_SECTION_HEADER_END)?;
+    output.write_all(&BSS_SECTION_HEADER)?;
+    output.write_all(&STRING_TABLE_SECTION_HEADER)?;
+    output.write_all(&STRING_TABLE_CONTENTS)?;
+    output.write_all(&code)?;
+    output.write_all(&CODE_TRAILER)?;
+    Ok(())
+}
+
+fn compile_loop(code: &mut Vec<u8>, children: Vec<Tree>) {
+    for _child in children {
+        code.extend(&[0x31, 0xc9]);
+    }
+}
