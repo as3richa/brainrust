@@ -22,7 +22,7 @@ pub fn compile<W: io::Write, R: io::Read>(output: &mut W, mut stream: Stream<R>)
                     (shift as u32) % tape_length
                 };
 
-                assert!(0 <= normalized_shift && normalized_shift < tape_length);
+                assert!(normalized_shift < tape_length);
 
                 if normalized_shift != 0 {
                     if normalized_shift == 1 {
@@ -41,6 +41,10 @@ pub fn compile<W: io::Write, R: io::Read>(output: &mut W, mut stream: Stream<R>)
             EndOfFile => break,
         }
     }
+
+    asm.mov_eax_u32(60);
+    asm.xor_edi_edi();
+    asm.syscall();
 
     asm.assemble(output)?;
     Ok(())

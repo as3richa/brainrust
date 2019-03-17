@@ -94,8 +94,21 @@ impl<'a> Assembler<'a> for ElfAssembler {
         self.label_states[label] = LabelState::Populated(label_offset);
     }
 
+    fn mov_eax_u32(&mut self, value: u32) {
+        self.machine_code.extend(&[0xb8]);
+        self.machine_code.extend(&u32_to_le(value));
+    }
+
+    fn syscall(&mut self) {
+        self.machine_code.extend(&[0x0f, 0x05]);
+    }
+
     fn xor_eax_eax(&mut self) {
         self.machine_code.extend(&[0x31, 0xc0]);
+    }
+
+    fn xor_edi_edi(&mut self) {
+        self.machine_code.extend(&[0x31, 0xff]);
     }
 
     fn assemble<W: io::Write>(self, output: &mut W) -> Result<(), io::Error> {
