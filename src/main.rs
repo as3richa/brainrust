@@ -1,4 +1,7 @@
-mod native;
+mod assembler;
+mod compiler;
+mod elf;
+mod elf_assembler;
 mod parser;
 mod stream;
 mod tree;
@@ -6,11 +9,12 @@ mod tree;
 use std::fs::File;
 use std::io;
 
+use crate::compiler::compile;
 use crate::stream::Stream;
 
 fn main() {
     let stdin = io::stdin();
     let stream = Stream::new(stdin.lock());
-    let output = File::create("a.out").unwrap();
-    native::compile(output, stream).unwrap();
+    let mut output = File::create("a.out").unwrap();
+    compile(&mut output, stream).unwrap();
 }
