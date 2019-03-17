@@ -125,9 +125,3 @@ pub const STRING_TABLE_CONTENTS: [u8; 22] = [
     b'.', b'b', b's', b's', 0x00, // .bss (offset 7)
     b'.', b's', b'h', b's', b't', b'r', b't', b'a', b'b', 0x00, // .shstrtab (offset 12)
 ];
-
-pub const CODE_TRAILER: [u8; 9] = [
-    0xb8, 0x3c, 0x00, 0x00, 0x00, // mov eax, 0x3c ; 0x36 => exit syscall
-    0x31, 0xff, // xor edi, edi ; exit code zero
-    0x0f, 0x05, // syscall
-];

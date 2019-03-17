@@ -1,16 +1,15 @@
 use std::io;
 
 use crate::assembler::Assembler;
-use crate::assembler::Instruction::*;
 use crate::elf_assembler::ElfAssembler;
 use crate::parser::{parse, ParseError};
 use crate::stream::Stream;
 use crate::tree::Tree::*;
 
-const tape_length: u64 = 256;
+const tape_length: u32 = 256;
 
 pub fn compile<W: io::Write, R: io::Read>(output: &mut W, mut stream: Stream<R>) -> Result<(), ParseError> {
-    let mut assembler = ElfAssembler::new();
+    let mut asm = ElfAssembler::new();
 
     loop {
         let tree = parse(&mut stream)?;
@@ -18,34 +17,31 @@ pub fn compile<W: io::Write, R: io::Read>(output: &mut W, mut stream: Stream<R>)
         match tree {
             Move(shift) => {
                 let normalized_shift = if shift < 0 {
-                    (tape_length - (((-shift) as u64) % tape_length)) % tape_length
+                    (tape_length - (((-shift) as u32) % tape_length)) % tape_length
                 } else {
-                    (shift as u64) % tape_length
+                    (shift as u32) % tape_length
                 };
 
                 assert!(0 <= normalized_shift && normalized_shift < tape_length);
 
                 if normalized_shift != 0 {
                     if normalized_shift == 1 {
-                        assembler.emit_code(&[IncRbx])
+                        asm.inc_ebx();
                     } else {
-                        assembler.emit_code(&[AddRbxImmediate(normalized_shift)]);
+                        asm.add_ebx_u32(normalized_shift);
                     }
                     // FIXME: only works for power of two tape size
-                    assembler.emit_code(&[AndRbxImmediate(tape_length - 1)]);
+                    asm.and_ebx_u32(tape_length - 1);
                 }
             }
-            Add(_value) => assembler.emit_code(&[XorRaxRax]),
-            ReadChar => assembler.emit_code(&[XorRaxRax]),
-            WriteChar => assembler.emit_code(&[XorRaxRax]),
-            Loop(children) => {
-                let label = assembler.allocate_label("asdasdsa");
-                assembler.emit_code(&[JmpLeq(label), MovRaxImmediate(1), Label(label)]);
-            }
+            Add(_value) => asm.xor_eax_eax(),
+            ReadChar => asm.xor_eax_eax(),
+            WriteChar => asm.xor_eax_eax(),
+            Loop(children) => asm.xor_eax_eax(),
             EndOfFile => break,
         }
     }
 
-    assembler.assemble(output)?;
+    asm.assemble(output)?;
     Ok(())
 }
