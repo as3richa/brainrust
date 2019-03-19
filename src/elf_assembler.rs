@@ -61,9 +61,9 @@ macro_rules! instr {
     }
 }
 
-macro_rules! instr_imm32 {
-    ($name:ident, $code:expr) => {
-        fn $name(&mut self, operand: u32) {
+macro_rules! instr_imm {
+    ($name:ident, $operand_type:ident, $code:expr) => {
+        fn $name(&mut self, operand: $operand_type) {
             self.machine_code.extend(&$code);
             self.machine_code.extend(&operand.to_le_bytes());
         }
@@ -103,9 +103,10 @@ impl<'a> Assembler<'a> for ElfAssembler {
     instr!(xor_rax_rax, [0x48, 0x31, 0xc0]);
     instr!(xor_rdi_rdi, [0x48, 0x31, 0xff]);
 
-    instr_imm32!(add_r8_u32, [0x49, 0x81, 0xc0]);
-    instr_imm32!(mov_rax_u32, [0xb8]);
-    instr_imm32!(sub_r8_u32, [0x49, 0x81, 0xe8]);
+    instr_imm!(add_byte_ptr_r8_plus_r9_u8, u8, [0x43, 0x80, 0x04, 0x01]);
+    instr_imm!(add_r8_u32, u32, [0x49, 0x81, 0xc0]);
+    instr_imm!(mov_rax_u32, u32, [0xb8]);
+    instr_imm!(sub_r8_u32, u32, [0x49, 0x81, 0xe8]);
 
     instr_branch!(je, [0x0f, 0x84]);
     instr_branch!(jg, [0x0f, 0x8f]);

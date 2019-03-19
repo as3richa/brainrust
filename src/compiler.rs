@@ -116,7 +116,10 @@ pub fn compile<W: io::Write, R: io::Read>(output: &mut W, mut stream: Stream<R>)
                     }
                 }
             }
-            Add(_value) => asm.xor_rax_rax(),
+            Add(value) => {
+                let wrapped_value = ((value % 256 + 256) % 256) as u8;
+                asm.add_byte_ptr_r8_plus_r9_u8(wrapped_value);
+            }
             ReadChar => asm.xor_rax_rax(),
             WriteChar => asm.xor_rax_rax(),
             LoopStart => {
