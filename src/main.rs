@@ -4,7 +4,6 @@ mod elf;
 mod elf_assembler;
 mod parser;
 mod stream;
-mod tree;
 
 use std::fs::File;
 use std::io;

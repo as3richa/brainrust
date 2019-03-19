@@ -125,3 +125,5 @@ pub const STRING_TABLE_CONTENTS: [u8; 22] = [
     b'.', b'b', b's', b's', 0x00, // .bss (offset 7)
     b'.', b's', b'h', b's', b't', b'r', b't', b'a', b'b', 0x00, // .shstrtab (offset 12)
 ];
+
+pub const BSS_VIRTUAL_ADDRESS: u64 = 0x600000000000;

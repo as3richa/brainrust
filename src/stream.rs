@@ -19,27 +19,11 @@ impl<R: io::Read> Stream<R> {
 
     pub fn peek(&mut self) -> Result<Option<u8>, io::Error> {
         if self.peeked.is_none() {
-            loop {
-                match self.bytes.next() {
-                    Some(Ok(byte)) => match byte {
-                        b'>' | b'<' | b'+' | b'-' | b'.' | b',' | b'[' | b']' => {
-                            self.peeked = Some(byte);
-                            break;
-                        }
-                        b'\n' => {
-                            self.line += 1;
-                            self.column = 1;
-                        }
-                        _ => {
-                            self.column += 1;
-                        }
-                    },
-                    Some(Err(error)) => return Err(error),
-                    None => break,
-                };
+            if let Some(result) = self.bytes.next() {
+                let byte = result?;
+                self.peeked = Some(byte);
             }
         }
-
         Ok(self.peeked)
     }
 
