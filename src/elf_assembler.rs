@@ -78,11 +78,21 @@ macro_rules! instr_branch {
     }
 }
 
+macro_rules! instr_mov_addr {
+    ($name:ident, $code:expr) => {
+        fn $name(&mut self, address: Memory) {
+            self.machine_code.extend(&$code);
+            self.machine_code.extend(&(BSS_VIRTUAL_ADDRESS + address).to_le_bytes());
+        }
+    }
+}
+
 impl<'a> Assembler<'a> for ElfAssembler {
     type Memory = Memory;
     type Label = Label;
 
     fn allocate_memory(&mut self, size: u64) -> Self::Memory {
+        assert!(size < (MAX_BSS_SIZE - self.memory_allocated)); // FIXME
         let offset = self.memory_allocated;
         self.memory_allocated += size;
         offset
@@ -94,17 +104,30 @@ impl<'a> Assembler<'a> for ElfAssembler {
         index
     }
 
+    instr_mov_addr!(mov_rbx_addr, [0x48, 0xbb]);
+    instr_mov_addr!(mov_rcx_addr, [0x48, 0xb9]);
+    instr_mov_addr!(mov_rsp_addr, [0x48, 0xbc]);
+
     instr!(add_r8_r9, [0x41, 0x01, 0xc8]);
     instr!(cmovge_r8_r15, [0x4d, 0x0f, 0x4d, 0xc7]);
+    instr!(dec_byte_ptr_rbx_plus_r8, [0x42, 0xfe, 0x0c, 0x03]);
+    instr!(inc_byte_ptr_rbx_plus_r8, [0x42, 0xfe, 0x04, 0x03]);
     instr!(mov_r15_r8, [0x4d, 0x89, 0xc7]);
     instr!(sub_r15_r9, [0x4d, 0x29, 0xcf]);
     instr!(sub_r8_r9, [0x4d, 0x29, 0xc8]);
     instr!(syscall, [0x0f, 0x05]);
+    instr!(xor_r10_r10, [0x4d, 0x31, 0xd2]);
+    instr!(xor_r11_r11, [0x4d, 0x31, 0xdb]);
+    instr!(xor_r13_r13, [0x4d, 0x31, 0xed]);
+    instr!(xor_r8_r8, [0x4d, 0x31, 0xc0]);
     instr!(xor_rax_rax, [0x48, 0x31, 0xc0]);
     instr!(xor_rdi_rdi, [0x48, 0x31, 0xff]);
 
-    instr_imm!(add_byte_ptr_r8_plus_r9_u8, u8, [0x43, 0x80, 0x04, 0x01]);
+    instr_imm!(add_byte_ptr_rbx_plus_r8_u8, u8, [0x42, 0x80, 0x04, 0x03]);
     instr_imm!(add_r8_u32, u32, [0x49, 0x81, 0xc0]);
+    instr_imm!(mov_r12_u64, u64, [0x49, 0xbc]);
+    instr_imm!(mov_r14_u64, u64, [0x49, 0xbe]);
+    instr_imm!(mov_r9_u64, u64, [0x49, 0xb9]);
     instr_imm!(mov_rax_u32, u32, [0xb8]);
     instr_imm!(sub_r8_u32, u32, [0x49, 0x81, 0xe8]);
 
@@ -143,18 +166,27 @@ impl<'a> Assembler<'a> for ElfAssembler {
     }
 
     fn assemble<W: io::Write>(self, output: &mut W) -> Result<(), io::Error> {
-        let le_machine_code_size = self.machine_code.len().to_le_bytes();
+        assert!((self.machine_code.len() as u64) <= MAX_TEXT_SIZE); // FIXME
+
+        let le_text_size = self.machine_code.len().to_le_bytes();
+        let le_bss_size = self.memory_allocated.to_le_bytes();
+
         output.write_all(&ELF_HEADER)?;
         output.write_all(&TEXT_PROGRAM_HEADER_START)?;
-        output.write_all(&le_machine_code_size)?;
-        output.write_all(&le_machine_code_size)?;
+        output.write_all(&le_text_size)?;
+        output.write_all(&le_text_size)?;
         output.write_all(&TEXT_PROGRAM_HEADER_END)?;
-        output.write_all(&BSS_PROGRAM_HEADER)?;
+        output.write_all(&BSS_PROGRAM_HEADER_START)?;
+        output.write_all(&le_bss_size)?;
+        output.write_all(&le_bss_size)?;
+        output.write_all(&BSS_PROGRAM_HEADER_END)?;
         output.write_all(&DUMMY_SECTION_HEADER)?;
         output.write_all(&TEXT_SECTION_HEADER_START)?;
-        output.write_all(&le_machine_code_size)?;
+        output.write_all(&le_text_size)?;
         output.write_all(&TEXT_SECTION_HEADER_END)?;
-        output.write_all(&BSS_SECTION_HEADER)?;
+        output.write_all(&BSS_SECTION_HEADER_START)?;
+        output.write_all(&le_bss_size)?;
+        output.write_all(&BSS_SECTION_HEADER_END)?;
         output.write_all(&STRING_TABLE_SECTION_HEADER)?;
         output.write_all(&STRING_TABLE_CONTENTS)?;
         output.write_all(&self.machine_code)?;

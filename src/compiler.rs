@@ -30,11 +30,26 @@ use crate::stream::Stream;
 */
 
 const TAPE_LENGTH: u64 = 256;
+const INPUT_BUFFER_SIZE: u64 = 16;
+const OUTPUT_BUFFER_SIZE: u64 = 16;
 
 pub fn compile<W: io::Write, R: io::Read>(output: &mut W, mut stream: Stream<R>) -> Result<(), ParseError> {
     let mut asm = ElfAssembler::new();
 
     let tape = asm.allocate_memory(TAPE_LENGTH);
+    let input_buffer = asm.allocate_memory(INPUT_BUFFER_SIZE);
+    let output_buffer = asm.allocate_memory(OUTPUT_BUFFER_SIZE);
+
+    asm.mov_rbx_addr(tape);
+    asm.mov_rcx_addr(input_buffer);
+    asm.mov_rsp_addr(output_buffer);
+    asm.xor_r8_r8();
+    asm.mov_r9_u64(TAPE_LENGTH);
+    asm.xor_r10_r10();
+    asm.xor_r11_r11();
+    asm.mov_r12_u64(INPUT_BUFFER_SIZE);
+    asm.xor_r13_r13();
+    asm.mov_r14_u64(OUTPUT_BUFFER_SIZE);
 
     let mut loop_stack = vec![];
 
@@ -118,7 +133,13 @@ pub fn compile<W: io::Write, R: io::Read>(output: &mut W, mut stream: Stream<R>)
             }
             Add(value) => {
                 let wrapped_value = ((value % 256 + 256) % 256) as u8;
-                asm.add_byte_ptr_r8_plus_r9_u8(wrapped_value);
+
+                match wrapped_value {
+                    0 => (),
+                    1 => asm.inc_byte_ptr_rbx_plus_r8(),
+                    255 => asm.dec_byte_ptr_rbx_plus_r8(),
+                    _ => asm.add_byte_ptr_rbx_plus_r8_u8(wrapped_value),
+                }
             }
             ReadChar => asm.xor_rax_rax(),
             WriteChar => asm.xor_rax_rax(),
