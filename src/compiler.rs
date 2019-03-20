@@ -147,7 +147,31 @@ pub fn compile<W: io::Write, R: io::Read>(output: &mut W, mut stream: Stream<R>)
             WriteChar => {
                 // FIXME: allow unbuffered output
                 assert!(OUTPUT_BUFFER_SIZE > 0);
-                asm.xor_rax_rax()
+
+                // Copy a byte from the tape to the output buffer
+                asm.mov_r15b_byte_ptr_rbx_plus_r8();
+                asm.mov_byte_ptr_rsp_plus_r13_r15b();
+
+                // Increment output buffer index
+                asm.inc_r13();
+
+                let flush = asm.allocate_label();
+                let done = asm.allocate_label();
+
+                // Flush output buffer if character was a newline
+                asm.cmp_r15b_u8(b'\n');
+                asm.je(flush);
+
+                // Skip flush if the character was not a newline and the buffer isn't full
+                asm.cmp_r13_r14();
+                asm.jne(done);
+
+                asm.label(flush);
+
+                emit_flush(&mut asm);
+
+                // Flush is complete, or no flush was necessary
+                asm.label(done);
             }
             LoopStart => {
                 let start_label = asm.allocate_label();
@@ -171,11 +195,59 @@ pub fn compile<W: io::Write, R: io::Read>(output: &mut W, mut stream: Stream<R>)
     // FIXME: error handling
     assert!(loop_stack.len() == 0);
 
+    // Flush any remaining output
+    emit_flush(&mut asm);
+
     // 0x3c => sys_exit; exit code is in edi
     asm.mov_rax_u32(0x3c);
     asm.xor_rdi_rdi();
+
     asm.syscall();
 
     asm.assemble(output)?;
     Ok(())
+}
+
+fn emit_flush(asm: &mut ElfAssembler) {
+    // Let r15 represent the number of bytes written thus far
+    asm.xor_r15_r15();
+
+    // Start of flush loop
+    let loop_start = asm.allocate_label();
+    asm.label(loop_start);
+
+    // sys_write
+    asm.mov_rax_u32(0x01);
+
+    // fd 1, i.e. stdout
+    asm.mov_rdi_u32(0x01);
+
+    // Output buffer, excluding the already-written bytes
+    asm.mov_rsi_rsp();
+    asm.add_rsi_r15();
+
+    // Number of bytes remaining
+    asm.mov_rdx_r13();
+    asm.sub_rdx_r15();
+
+    asm.syscall();
+
+    let okay = asm.allocate_label();
+
+    // Check for errors (rax == -1)
+    asm.cmp_rax_u32(0);
+    asm.jge(okay);
+
+    // FIXME: error handling code here
+
+    asm.label(okay);
+
+    // Count the number of bytes written; if their remain bytes to be written, jump
+    // to the top of the loop
+    asm.add_r15_rax();
+    asm.cmp_r15_r13();
+    asm.jne(loop_start);
+
+    // Mark the buffer as empty
+    asm.xor_r13_r13();
 }
