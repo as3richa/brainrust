@@ -11,6 +11,7 @@ pub trait Assembler<'a> {
     fn add_r8_r9(&mut self);
     fn add_r8_u32(&mut self, operand: u32);
     fn cmovge_r8_r15(&mut self);
+    fn cmp_byte_ptr_rbx_plus_r8_u8(&mut self, operand: u8);
     fn dec_byte_ptr_rbx_plus_r8(&mut self);
     fn inc_byte_ptr_rbx_plus_r8(&mut self);
     fn je(&mut self, label: Self::Label);
@@ -22,7 +23,7 @@ pub trait Assembler<'a> {
     fn mov_r14_u64(&mut self, operand: u64);
     fn mov_r15_r8(&mut self);
     fn mov_r9_u64(&mut self, operand: u64);
-    fn mov_rax_u32(&mut self, address: u32);
+    fn mov_rax_u32(&mut self, operand: u32);
     fn mov_rbx_addr(&mut self, address: Self::Memory);
     fn mov_rcx_addr(&mut self, address: Self::Memory);
     fn mov_rsp_addr(&mut self, address: Self::Memory);

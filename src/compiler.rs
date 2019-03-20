@@ -29,7 +29,7 @@ use crate::stream::Stream;
     (and even if that wasn't the case, it would be a waste of space).
 */
 
-const TAPE_LENGTH: u64 = 256;
+const TAPE_LENGTH: u64 = 30000;
 const INPUT_BUFFER_SIZE: u64 = 16;
 const OUTPUT_BUFFER_SIZE: u64 = 16;
 
@@ -58,6 +58,8 @@ pub fn compile<W: io::Write, R: io::Read>(output: &mut W, mut stream: Stream<R>)
 
         match token {
             Move(shift) => {
+                // FIXME: almost definitely have a bug related to sign extension here
+
                 if shift >= 0 {
                     if shift > (u32::max_value() as i64) {
                         panic!("FIXME");
@@ -111,7 +113,7 @@ pub fn compile<W: io::Write, R: io::Read>(output: &mut W, mut stream: Stream<R>)
                     }
 
                     let left_shift = {
-                        let value = ((-shift).abs() as u64) % TAPE_LENGTH;
+                        let value = ((-shift) as u64) % TAPE_LENGTH;
                         assert!(value <= (u32::max_value() as u64));
                         value as u32
                     };
@@ -142,17 +144,23 @@ pub fn compile<W: io::Write, R: io::Read>(output: &mut W, mut stream: Stream<R>)
                 }
             }
             ReadChar => asm.xor_rax_rax(),
-            WriteChar => asm.xor_rax_rax(),
+            WriteChar => {
+                // FIXME: allow unbuffered output
+                assert!(OUTPUT_BUFFER_SIZE > 0);
+                asm.xor_rax_rax()
+            }
             LoopStart => {
                 let start_label = asm.allocate_label();
                 let end_label = asm.allocate_label();
                 loop_stack.push((start_label, end_label));
+                asm.cmp_byte_ptr_rbx_plus_r8_u8(0);
                 asm.je(end_label);
                 asm.label(start_label);
             }
             LoopEnd => {
                 // FIXME: error handling
                 let (start_label, end_label) = loop_stack.pop().unwrap();
+                asm.cmp_byte_ptr_rbx_plus_r8_u8(0);
                 asm.jne(start_label);
                 asm.label(end_label);
             }

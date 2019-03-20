@@ -108,7 +108,7 @@ impl<'a> Assembler<'a> for ElfAssembler {
     instr_mov_addr!(mov_rcx_addr, [0x48, 0xb9]);
     instr_mov_addr!(mov_rsp_addr, [0x48, 0xbc]);
 
-    instr!(add_r8_r9, [0x41, 0x01, 0xc8]);
+    instr!(add_r8_r9, [0x4d, 0x01, 0xc8]);
     instr!(cmovge_r8_r15, [0x4d, 0x0f, 0x4d, 0xc7]);
     instr!(dec_byte_ptr_rbx_plus_r8, [0x42, 0xfe, 0x0c, 0x03]);
     instr!(inc_byte_ptr_rbx_plus_r8, [0x42, 0xfe, 0x04, 0x03]);
@@ -125,6 +125,7 @@ impl<'a> Assembler<'a> for ElfAssembler {
 
     instr_imm!(add_byte_ptr_rbx_plus_r8_u8, u8, [0x42, 0x80, 0x04, 0x03]);
     instr_imm!(add_r8_u32, u32, [0x49, 0x81, 0xc0]);
+    instr_imm!(cmp_byte_ptr_rbx_plus_r8_u8, u8, [0x42, 0x80, 0x3c, 0x03]);
     instr_imm!(mov_r12_u64, u64, [0x49, 0xbc]);
     instr_imm!(mov_r14_u64, u64, [0x49, 0xbe]);
     instr_imm!(mov_r9_u64, u64, [0x49, 0xb9]);
@@ -177,7 +178,6 @@ impl<'a> Assembler<'a> for ElfAssembler {
         output.write_all(&le_text_size)?;
         output.write_all(&TEXT_PROGRAM_HEADER_END)?;
         output.write_all(&BSS_PROGRAM_HEADER_START)?;
-        output.write_all(&le_bss_size)?;
         output.write_all(&le_bss_size)?;
         output.write_all(&BSS_PROGRAM_HEADER_END)?;
         output.write_all(&DUMMY_SECTION_HEADER)?;
