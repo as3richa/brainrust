@@ -8,25 +8,15 @@ use crate::stream::Stream;
 
 /*
     We allocate registers as follows:
-    - rax, rdi, rsi, rdx: Reserved for syscall invocation
     - rbx: Pointer to the base of the tape
-    - rcx: Pointer to the input buffer
+    - r14: Pointer to the input buffer
     - rsp: Pointer to the output buffer
     - r8: Current tape position
     - r9: Tape length
     - r10: Current position within the input buffer
-    - r11: Total number of bytes in the input buffer
-    - r12: Input buffer size
+    - r12: Total number of bytes in the input buffer
     - r13: Current position within the output buffer
-    - r14: Output buffer size
     - r15: Scratch space
-
-    There are a lot of potential optimizations to be had by choosing smaller
-    registers where applicable, but I decided it wasn't worth the effort to
-    implement the necessary plumbing (in particular, writing a general-purpose
-    assembler is hard). Constant values are stored in registers too,
-    because x64 doesn't support 64-bit immediate values for most instructions
-    (and even if that wasn't the case, it would be a waste of space).
 */
 
 const TAPE_LENGTH: u64 = 30000;
@@ -41,15 +31,13 @@ pub fn compile<W: io::Write, R: io::Read>(output: &mut W, mut stream: Stream<R>)
     let output_buffer = asm.allocate_memory(OUTPUT_BUFFER_SIZE);
 
     asm.mov_rbx_addr(tape);
-    asm.mov_rcx_addr(input_buffer);
+    asm.mov_r14_addr(input_buffer);
     asm.mov_rsp_addr(output_buffer);
     asm.xor_r8_r8();
     asm.mov_r9_u64(TAPE_LENGTH);
     asm.xor_r10_r10();
-    asm.xor_r11_r11();
-    asm.mov_r12_u64(INPUT_BUFFER_SIZE);
+    asm.xor_r12_r12();
     asm.xor_r13_r13();
-    asm.mov_r14_u64(OUTPUT_BUFFER_SIZE);
 
     let mut loop_stack = vec![];
 
@@ -143,7 +131,55 @@ pub fn compile<W: io::Write, R: io::Read>(output: &mut W, mut stream: Stream<R>)
                     _ => asm.add_byte_ptr_rbx_plus_r8_u8(wrapped_value),
                 }
             }
-            ReadChar => asm.xor_rax_rax(),
+            ReadChar => {
+                // FIXME: allow unbuffered input
+                assert!(INPUT_BUFFER_SIZE > 0);
+
+                let data_in_buffer = asm.allocate_label();
+
+                asm.cmp_r10_r12();
+                asm.jne(data_in_buffer);
+
+                // Flush any buffered output
+                {
+                    let skip_flush = asm.allocate_label();
+                    asm.cmp_r13_u32(0);
+                    asm.je(skip_flush);
+                    emit_flush(&mut asm);
+                    asm.label(skip_flush);
+                }
+
+                // Read into the input buffer
+                {
+                    asm.xor_rax_rax(); // sys_read
+                    asm.xor_rdi_rdi(); // Standard input
+                    asm.mov_rsi_r14(); // Input buffer
+                    asm.mov_rdx_u32(INPUT_BUFFER_SIZE as u32); // Input buffer size
+                    asm.syscall();
+
+                    // FIXME: distinguish errors from EOF
+                    let okay = asm.allocate_label();
+                    asm.cmp_rax_u32(0);
+                    asm.jg(okay);
+                    emit_exit(&mut asm, 2);
+                    asm.label(okay);
+
+                    // Record the number of bytes in the input buffer
+                    asm.mov_r12_rax();
+
+                    // Rest input buffer cursor to zero
+                    asm.xor_r10_r10();
+                }
+
+                asm.label(data_in_buffer);
+
+                // Copy a byte from the input buffer to the tape
+                asm.mov_r15b_byte_ptr_r14_plus_r10();
+                asm.mov_byte_ptr_rbx_plus_r8_r15b();
+
+                // Increment input buffer index
+                asm.inc_r10();
+            }
             WriteChar => {
                 // FIXME: allow unbuffered output
                 assert!(OUTPUT_BUFFER_SIZE > 0);
@@ -163,7 +199,7 @@ pub fn compile<W: io::Write, R: io::Read>(output: &mut W, mut stream: Stream<R>)
                 asm.je(flush);
 
                 // Skip flush if the character was not a newline and the buffer isn't full
-                asm.cmp_r13_r14();
+                asm.cmp_r13_u32(OUTPUT_BUFFER_SIZE as u32);
                 asm.jne(done);
 
                 asm.label(flush);
@@ -196,16 +232,33 @@ pub fn compile<W: io::Write, R: io::Read>(output: &mut W, mut stream: Stream<R>)
     assert!(loop_stack.len() == 0);
 
     // Flush any remaining output
-    emit_flush(&mut asm);
+    {
+        let skip_flush = asm.allocate_label();
+        asm.cmp_r13_u32(0);
+        asm.je(skip_flush);
+        emit_flush(&mut asm);
+        asm.label(skip_flush);
+    }
 
-    // 0x3c => sys_exit; exit code is in edi
-    asm.mov_rax_u32(0x3c);
-    asm.xor_rdi_rdi();
-
-    asm.syscall();
+    emit_exit(&mut asm, 0);
 
     asm.assemble(output)?;
+
     Ok(())
+}
+
+fn emit_exit(asm: &mut ElfAssembler, code: u32) {
+    // sys_exit
+    asm.mov_rax_u32(0x3c);
+
+    // Exit code
+    if code == 0 {
+        asm.xor_rdi_rdi();
+    } else {
+        asm.mov_rdi_u32(code);
+    }
+
+    asm.syscall();
 }
 
 fn emit_flush(asm: &mut ElfAssembler) {
@@ -234,15 +287,13 @@ fn emit_flush(asm: &mut ElfAssembler) {
 
     let okay = asm.allocate_label();
 
-    // Check for errors (rax == -1)
+    // Check for errors (rax <= 0, signed)
     asm.cmp_rax_u32(0);
-    asm.jge(okay);
-
-    // FIXME: error handling code here
-
+    asm.jg(okay);
+    emit_exit(asm, 1);
     asm.label(okay);
 
-    // Count the number of bytes written; if their remain bytes to be written, jump
+    // Count the number of bytes written; if there remain bytes to be written, jump
     // to the top of the loop
     asm.add_r15_rax();
     asm.cmp_r15_r13();
