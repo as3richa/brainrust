@@ -1,0 +1,59 @@
+#!/usr/bin/env ruby
+
+require 'tmpdir'
+require_relative 'lib'
+
+OPERAND_SIZE = {
+  '$u8' => 1,
+  '$u32' => 4,
+  '$u64' => 8,
+  '$addr' => 8,
+  '$label' => 4
+}.freeze
+
+def branch?(mnemonic)
+  /^j([a-z]{1,2})$/.match?(mnemonic.split.first)
+end
+
+def machine_code(instruction)
+  operand_size = nil
+
+  instruction = instruction.gsub(/\$([a-z0-9]+)/) do |variable|
+    operand_size = OPERAND_SIZE.fetch(variable)
+    '0x' + ('11' * operand_size)
+  end
+
+  File.write('tmp.S', "bits 64\n#{instruction}")
+
+  okay = system('nasm tmp.S -f bin -o tmp.bin')
+  assert(okay, "nasm failed on #{instruction}")
+
+  bytes = File.binread('tmp.bin').bytes.to_a
+
+  return bytes if operand_size.nil?
+  bytes[(0...-operand_size)]
+end
+
+instructions = load_instructions
+
+code = Dir.mktmpdir do |dirname|
+  Dir.chdir(dirname) do
+    instructions.map { |instruction| machine_code(instruction) }
+  end
+end
+
+instructions.zip(code).each do |instruction, code|
+  identifier = identifier(instruction)
+  operand_type = operand_type(instruction)
+  code_array_literal = '[' + code.map { |byte| "0x%02x" % byte }.join(', ') + ']'
+
+  line = if branch?(instruction)
+    "instr_branch!(#{identifier}, #{code_array_literal});"
+  elsif operand_type.nil?
+    "instr!(#{identifier}, #{code_array_literal});"
+  else
+    "instr!(#{identifier}, #{operand_type}, #{code_array_literal});"
+  end
+
+  puts(line)
+end

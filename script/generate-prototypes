@@ -1,0 +1,33 @@
+#!/usr/bin/env ruby
+
+require_relative 'lib'
+
+OPERAND_NAME = {
+  'Self::Label' => 'label',
+  'Self::Address' => 'addr'
+}.freeze
+
+def prototype(mnemonic)
+  operand = operand(mnemonic)
+  identifier = identifier(mnemonic)
+  return "fn #{identifier}(&mut self)" if operand.nil?
+  name = operand.fetch(:name)
+  type = operand.fetch(:type)
+  "fn #{identifier}(&mut self, #{name}: #{type})"
+end
+
+instructions = load_instructions
+
+instructions.each do |instruction|
+  identifier = identifier(instruction)
+  operand_type = operand_type(instruction)
+
+  line = if operand_type.nil?
+    "fn #{identifier}(&mut self);"
+  else
+    operand_name = OPERAND_NAME.fetch(operand_type, 'operand')
+    "fn #{identifier}(&mut self, #{operand_name}: #{operand_type});"
+  end
+
+  puts(line)
+end
