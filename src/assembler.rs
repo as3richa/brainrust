@@ -7,15 +7,16 @@ pub trait Assembler<'a> {
     fn allocate_memory(&mut self, size: u64) -> Self::Address;
     fn allocate_label(&mut self) -> Self::Label;
 
-        fn label(&mut self, label: Self::Label);
+    fn label(&mut self, label: Self::Label);
     fn assemble<W: io::Write>(self, output: &mut W) -> Result<(), io::Error>;
 
     fn add_byte_ptr_rbx_plus_r8_u8(&mut self, operand: u8);
     fn add_r15_rax(&mut self);
-    fn add_r8_u32(&mut self, operand: u32);
+    fn add_r8_i32(&mut self, operand: i32);
+    fn add_r8_i8(&mut self, operand: i8);
     fn add_r8_r9(&mut self);
     fn add_rsi_r15(&mut self);
-    fn cmovge_r8_r15(&mut self);
+    fn cmovae_r8_r15(&mut self);
     fn cmp_byte_ptr_rbx_plus_r8_u8(&mut self, operand: u8);
     fn cmp_r10_r11(&mut self);
     fn cmp_r10_r12(&mut self);
@@ -32,8 +33,8 @@ pub trait Assembler<'a> {
     fn jg(&mut self, label: Self::Label);
     fn jge(&mut self, label: Self::Label);
     fn jmp(&mut self, label: Self::Label);
-    fn jnc(&mut self, label: Self::Label);
     fn jne(&mut self, label: Self::Label);
+    fn jns(&mut self, label: Self::Label);
     fn mov_byte_ptr_rbx_plus_r8_r15b(&mut self);
     fn mov_byte_ptr_rsp_plus_r13_r15b(&mut self);
     fn mov_r11_rax(&mut self);
@@ -56,7 +57,6 @@ pub trait Assembler<'a> {
     fn mov_rsi_rsp(&mut self);
     fn mov_rsp_addr(&mut self, addr: Self::Address);
     fn sub_r15_r9(&mut self);
-    fn sub_r8_u32(&mut self, operand: u32);
     fn sub_r8_r9(&mut self);
     fn sub_rdx_r15(&mut self);
     fn syscall(&mut self);

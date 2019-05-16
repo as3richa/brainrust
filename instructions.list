@@ -1,9 +1,10 @@
 add BYTE [rbx+r8], $u8
 add r15, rax
-add r8, $u32
+add r8, $i32
+add r8, $i8
 add r8, r9
 add rsi, r15
-cmovge r8, r15
+cmovae r8, r15
 cmp BYTE [rbx+r8], $u8
 cmp r10, r11
 cmp r10, r12
@@ -20,8 +21,8 @@ je $label
 jg $label 
 jge $label
 jmp $label
-jnc $label
 jne $label
+jns $label
 mov BYTE [rbx+r8], r15b
 mov BYTE [rsp+r13], r15b
 mov r11, rax
@@ -44,7 +45,6 @@ mov rsi, r14
 mov rsi, rsp
 mov rsp, $addr
 sub r15, r9
-sub r8, $u32
 sub r8, r9
 sub rdx, r15
 syscall
